@@ -66,6 +66,9 @@
         .custom-scrollbar::-webkit-scrollbar {
             width: 4px;
         }
+        .custom-scrollbar {
+            -webkit-overflow-scrolling: touch;
+        }
         .custom-scrollbar::-webkit-scrollbar-thumb {
             background: rgba(var(--tg-theme-text-color-rgb, 248, 250, 252), 0.1);
             border-radius: 10px;
@@ -501,7 +504,7 @@
                     </header>
 
                     {/* Content */}
-                    <main className="flex-1 overflow-hidden relative">
+                    <main className="flex-1 overflow-hidden relative min-h-0">
                         <AnimatePresence mode="wait">
                             {activeTab === 'chat' ? (
                                 <motion.div 
@@ -509,7 +512,7 @@
                                     initial={{ opacity: 0, x: -20 }}
                                     animate={{ opacity: 1, x: 0 }}
                                     exit={{ opacity: 0, x: -20 }}
-                                    className="h-full flex flex-col"
+                                    className="absolute inset-0 flex flex-col"
                                 >
                                             <div 
                                                 ref={scrollRef}
@@ -620,7 +623,7 @@
                                     initial={{ opacity: 0, x: 20 }}
                                     animate={{ opacity: 1, x: 0 }}
                                     exit={{ opacity: 0, x: 20 }}
-                                    className="p-4 space-y-4 h-full overflow-y-auto custom-scrollbar"
+                                    className="absolute inset-0 p-4 space-y-4 overflow-y-auto custom-scrollbar"
                                 >
                                     <button
                                         onClick={createNewChat}
@@ -690,14 +693,14 @@
                                         </div>
                                     )}
                                 </motion.div>
-                            ) : (
-                                <motion.div 
-                                    key="settings"
-                                    initial={{ opacity: 0, x: 20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    exit={{ opacity: 0, x: 20 }}
-                                    className="p-4 space-y-6 h-full overflow-y-auto custom-scrollbar"
-                                >
+                              ) : (
+                                  <motion.div 
+                                      key="settings"
+                                      initial={{ opacity: 0, x: 20 }}
+                                      animate={{ opacity: 1, x: 0 }}
+                                      exit={{ opacity: 0, x: 20 }}
+                                      className="absolute inset-0 p-4 space-y-6 overflow-y-auto custom-scrollbar"
+                                  >
                                     <div className="glass p-4 rounded-2xl">
                                         <h3 className="text-sm font-bold mb-4 flex items-center gap-2">
                                             <ChatIcon /> Выберите модель
