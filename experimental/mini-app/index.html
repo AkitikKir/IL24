@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ИЛ24 Mini App</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/framer-motion@11.11.17/dist/framer-motion.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            overflow: hidden;
+            background-color: var(--tg-theme-bg-color, #0f172a);
+            color: var(--tg-theme-text-color, #f8fafc);
+        }
+        .glass {
+            background: rgba(var(--tg-theme-bg-color-rgb, 15, 23, 42), 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(var(--tg-theme-text-color-rgb, 248, 250, 252), 0.1);
+        }
+        .message-bubble {
+            max-width: 85%;
+            border-radius: 1.25rem;
+            position: relative;
+        }
+        .message-tail {
+            position: absolute;
+            bottom: 0;
+            width: 1rem;
+            height: 1rem;
+        }
+        .message-user .message-tail {
+            right: -0.4rem;
+            background: var(--tg-theme-button-color, #3b82f6);
+            clip-path: polygon(0 0, 0% 100%, 100% 100%);
+        }
+        .message-bot .message-tail {
+            left: -0.4rem;
+            background: var(--tg-theme-secondary-bg-color, #1e293b);
+            clip-path: polygon(100% 0, 0 100%, 100% 100%);
+        }
+        .message-timestamp {
+            font-size: 0.65rem;
+            opacity: 0.4;
+            margin-top: 0.25rem;
+        }
+        .message-user {
+            background-color: var(--tg-theme-button-color, #3b82f6);
+            color: var(--tg-theme-button-text-color, #ffffff);
+            border-bottom-right-radius: 0.25rem;
+        }
+        .message-bot {
+            background-color: var(--tg-theme-secondary-bg-color, #1e293b);
+            color: var(--tg-theme-text-color, #f8fafc);
+            border-bottom-left-radius: 0.25rem;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(var(--tg-theme-text-color-rgb, 248, 250, 252), 0.1);
+            border-radius: 10px;
+        }
+        @keyframes pulse-soft {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .animate-pulse-soft {
+            animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        .markdown-content pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin: 0.5rem 0;
+            font-family: monospace;
+            font-size: 0.8rem;
+        }
+        .markdown-content code {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.1rem 0.2rem;
+            border-radius: 0.2rem;
+            font-family: monospace;
+        }
+        .markdown-content p {
+            margin-bottom: 0.5rem;
+        }
+        .markdown-content p:last-child {
+            margin-bottom: 0;
+        }
+        .markdown-content ul, .markdown-content ol {
+            margin-left: 1.25rem;
+            margin-bottom: 0.5rem;
+            list-style-type: disc;
+        }
+    </style>
+</head>
+<body class="h-screen w-full">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { motion, AnimatePresence } = window.Motion || window.FramerMotion || { motion: (props) => <div {...props} />, AnimatePresence: ({children}) => children };
+
+            const App = () => {
+                const [messages, setMessages] = useState([
+                    { id: 1, role: 'assistant', content: 'Привет! Я твой AI помощник ИЛ24. Как я могу помочь тебе сегодня?', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+                ]);
+                const [input, setInput] = useState('');
+                const [isLoading, setIsLoading] = useState(false);
+                const [models, setModels] = useState([]);
+                const [selectedModel, setSelectedModel] = useState(localStorage.getItem('il24_model') || 'yandexgpt/rc');
+                const [activeTab, setActiveTab] = useState('chat');
+                const [chats, setChats] = useState([]);
+                const [currentChatId, setCurrentChatId] = useState(null);
+                const [searchTerm, setSearchTerm] = useState('');
+                const [showScrollBottom, setShowScrollBottom] = useState(false);
+                const scrollRef = useRef(null);
+
+                const handleScroll = () => {
+                    if (scrollRef.current) {
+                        const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+                        setShowScrollBottom(scrollHeight - scrollTop - clientHeight > 300);
+                    }
+                };
+
+                const scrollToBottom = () => {
+                    if (scrollRef.current) {
+                        scrollRef.current.scrollTo({
+                            top: scrollRef.current.scrollHeight,
+                            behavior: 'smooth'
+                        });
+                    }
+                };
+
+                const filteredChats = useMemo(() => {
+                    if (!searchTerm) return chats;
+                    return chats.filter(c => c.title.toLowerCase().includes(searchTerm.toLowerCase()));
+                }, [chats, searchTerm]);
+
+                const tg = window.Telegram.WebApp;
+
+                useEffect(() => {
+                    localStorage.setItem('il24_model', selectedModel);
+                }, [selectedModel]);
+
+                const loadChats = async () => {
+                    const uid = tg.initDataUnsafe?.user?.id || 12345;
+                    try {
+                        const res = await fetch(`/api/chats?user_id=${uid}`);
+                        const data = await res.json();
+                        setChats(data || []);
+                    } catch (err) {
+                        console.error('Error loading chats:', err);
+                    }
+                };
+
+                const createNewChat = async () => {
+                    const uid = tg.initDataUnsafe?.user?.id || 12345;
+                    try {
+                        const res = await fetch('/api/chats/create', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_id: uid, title: 'Новый чат' })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            tg.HapticFeedback.notificationOccurred('success');
+                            setCurrentChatId(data.chat_id);
+                            setMessages([{ 
+                                id: Date.now(), 
+                                role: 'assistant', 
+                                content: 'Новый чат создан. Чем я могу помочь?',
+                                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                            }]);
+                            setActiveTab('chat');
+                            loadChats();
+                        }
+                    } catch (err) {
+                        console.error('Error creating chat:', err);
+                    }
+                };
+
+                const switchChat = async (chatId) => {
+                    const uid = tg.initDataUnsafe?.user?.id || 12345;
+                    setCurrentChatId(chatId);
+                    try {
+                        const res = await fetch(`/api/history?user_id=${uid}&chat_id=${chatId}`);
+                        const data = await res.json();
+                        if (data && data.length > 0) {
+                            setMessages(data.map((h, i) => ({
+                                id: i,
+                                role: h.role,
+                                content: h.content,
+                                timestamp: ''
+                            })));
+                        } else {
+                            setMessages([{ 
+                                id: Date.now(), 
+                                role: 'assistant', 
+                                content: 'Чат пуст. Начните новый разговор!',
+                                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                            }]);
+                        }
+                        setActiveTab('chat');
+                        tg.HapticFeedback.selectionChanged();
+                    } catch (err) {
+                        console.error('Error loading chat history:', err);
+                    }
+                };
+
+                const deleteChat = async (chatId) => {
+                    const uid = tg.initDataUnsafe?.user?.id || 12345;
+                    tg.showConfirm('Удалить этот чат?', async (ok) => {
+                        if (ok) {
+                            try {
+                                const res = await fetch(`/api/chats/delete?user_id=${uid}&chat_id=${chatId}`, { method: 'POST' });
+                                const data = await res.json();
+                                if (data.success) {
+                                    tg.HapticFeedback.notificationOccurred('warning');
+                                    loadChats();
+                                    if (currentChatId === chatId) {
+                                        setCurrentChatId(null);
+                                        setMessages([{ 
+                                            id: Date.now(), 
+                                            role: 'assistant', 
+                                            content: 'Привет! Я твой AI помощник ИЛ24. Как я могу помочь тебе сегодня?',
+                                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                        }]);
+                                    }
+                                }
+                            } catch (err) {
+                                console.error('Error deleting chat:', err);
+                            }
+                        }
+                    });
+                };
+
+                const renameChat = async (chatId, currentTitle) => {
+                    const uid = tg.initDataUnsafe?.user?.id || 12345;
+                    // Use a simple prompt for now, could be a custom modal later
+                    const newTitle = prompt('Введите новое название чата:', currentTitle);
+                    if (!newTitle || newTitle === currentTitle) return;
+
+                    try {
+                        const res = await fetch('/api/chats/rename', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_id: uid, chat_id: chatId, title: newTitle })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            tg.HapticFeedback.notificationOccurred('success');
+                            loadChats();
+                        }
+                    } catch (err) {
+                        console.error('Error renaming chat:', err);
+                    }
+                };
+
+            const renderer = new marked.Renderer();
+            renderer.code = (code, language) => {
+                const id = 'code-' + Math.random().toString(36).substr(2, 9);
+                return `
+                    <div class="relative group/code my-2">
+                        <div class="absolute right-2 top-2 opacity-0 group-hover/code:opacity-100 transition-opacity">
+                            <button 
+                                onclick="copyCode('${id}')"
+                                class="p-1.5 bg-white/10 hover:bg-white/20 rounded text-white/50 hover:text-white transition-colors"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                            </button>
+                        </div>
+                        <pre><code id="${id}" class="language-${language}">${code}</code></pre>
+                    </div>
+                `;
+            };
+            marked.setOptions({ renderer });
+
+            // Global copy function for the generated HTML
+            window.copyCode = (id) => {
+                const code = document.getElementById(id).innerText;
+                navigator.clipboard.writeText(code);
+                tg.HapticFeedback.impactOccurred('light');
+                // We can't easily show a toast from here without passing setMessages or similar,
+                // but we can use tg.showAlert or just haptic feedback.
+            };
+
+                useEffect(() => {
+                    tg.ready();
+                    tg.expand();
+                    tg.enableClosingConfirmation();
+                    
+                    const uid = tg.initDataUnsafe?.user?.id || 12345;
+
+                    fetch('/api/models')
+                        .then(res => res.json())
+                        .then(data => setModels(data))
+                        .catch(err => console.error('Error fetching models:', err));
+
+                    loadChats();
+                    switchChat(null); // Load main bot history on startup
+
+                    const themeParams = tg.themeParams;
+
+                
+                const defaultBg = '#0f172a';
+                const defaultText = '#f8fafc';
+                
+                const bg = themeParams.bg_color || defaultBg;
+                const text = themeParams.text_color || defaultText;
+                
+                const bgRgb = hexToRgb(bg);
+                const textRgb = hexToRgb(text);
+                
+                document.documentElement.style.setProperty('--tg-theme-bg-color-rgb', `${bgRgb.r}, ${bgRgb.g}, ${bgRgb.b}`);
+                document.documentElement.style.setProperty('--tg-theme-text-color-rgb', `${textRgb.r}, ${textRgb.g}, ${textRgb.b}`);
+                
+                if (!themeParams.bg_color) {
+                    document.documentElement.style.setProperty('--tg-theme-bg-color', defaultBg);
+                    document.documentElement.style.setProperty('--tg-theme-text-color', defaultText);
+                    document.documentElement.style.setProperty('--tg-theme-secondary-bg-color', '#1e293b');
+                    document.documentElement.style.setProperty('--tg-theme-button-color', '#3b82f6');
+                }
+            }, []);
+
+            useEffect(() => {
+                if (scrollRef.current) {
+                    scrollRef.current.scrollTo({
+                        top: scrollRef.current.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                }
+            }, [messages, isLoading]);
+
+            const hexToRgb = (hex) => {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                } : { r: 0, g: 0, b: 0 };
+            };
+
+            const handleSend = async (overridePrompt = null) => {
+                const promptToSend = overridePrompt || input;
+                if (!promptToSend.trim() || isLoading) return;
+
+                tg.HapticFeedback.impactOccurred('light');
+
+                const userMessage = { 
+                    id: Date.now(), 
+                    role: 'user', 
+                    content: promptToSend, 
+                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                };
+                setMessages(prev => [...prev, userMessage]);
+                setInput('');
+                setIsLoading(true);
+
+                try {
+                    const response = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: tg.initDataUnsafe?.user?.id || 12345,
+                            prompt: promptToSend,
+                            model_id: selectedModel,
+                            chat_id: currentChatId
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (data.success) {
+                        setMessages(prev => [...prev, { 
+                            id: Date.now() + 1, 
+                            role: 'assistant', 
+                            content: data.response,
+                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        }]);
+                        tg.HapticFeedback.notificationOccurred('success');
+                        
+                        // Auto-rename chat if it's "Новый чат"
+                        if (currentChatId) {
+                            const currentChat = chats.find(c => c.id === currentChatId);
+                            if (currentChat && (currentChat.title === 'Новый чат' || !currentChat.title)) {
+                                const newTitle = promptToSend.length > 30 ? promptToSend.substring(0, 30) + '...' : promptToSend;
+                                fetch('/api/chats/rename', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ 
+                                        user_id: tg.initDataUnsafe?.user?.id || 12345, 
+                                        chat_id: currentChatId, 
+                                        title: newTitle 
+                                    })
+                                }).then(() => loadChats());
+                            }
+                        }
+                        
+                        loadChats();
+                    } else {
+                        setMessages(prev => [...prev, { 
+                            id: Date.now() + 1, 
+                            role: 'assistant', 
+                            content: 'Ошибка: ' + data.response,
+                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        }]);
+                        tg.HapticFeedback.notificationOccurred('error');
+                    }
+                } catch (error) {
+                    setMessages(prev => [...prev, { 
+                        id: Date.now() + 1, 
+                        role: 'assistant', 
+                        content: 'Ошибка сети. Попробуйте позже.',
+                        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    }]);
+                    tg.HapticFeedback.notificationOccurred('error');
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const copyToClipboard = (text) => {
+                navigator.clipboard.writeText(text);
+                tg.HapticFeedback.impactOccurred('medium');
+                tg.showAlert('Текст скопирован!');
+            };
+
+            const clearChat = () => {
+                tg.showConfirm('Вы уверены, что хотите очистить историю чата?', async (ok) => {
+                    if (ok) {
+                        const uid = tg.initDataUnsafe?.user?.id || 12345;
+                        const chatParam = currentChatId ? `&chat_id=${currentChatId}` : '';
+                        try {
+                            const res = await fetch(`/api/history/clear?user_id=${uid}${chatParam}`, { method: 'POST' });
+                            const data = await res.json();
+                            if (data.success) {
+                                setMessages([{ 
+                                    id: Date.now(), 
+                                    role: 'assistant', 
+                                    content: 'История очищена. Чем я могу помочь?',
+                                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                }]);
+                                tg.HapticFeedback.notificationOccurred('warning');
+                            }
+                        } catch (err) {
+                            console.error('Error clearing history:', err);
+                            tg.showAlert('Ошибка при очистке истории');
+                        }
+                    }
+                });
+            };
+
+            const HistoryIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>;
+            const ChatIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/></svg>;
+            const SettingsIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>;
+            const SendIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>;
+            const CopyIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>;
+              const TrashIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>;
+              const PlusIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+              const MicIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>;
+              const SearchIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>;
+              const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
+              const ChevronDownIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>;
+
+            return (
+                <div className="flex flex-col h-screen max-w-md mx-auto relative overflow-hidden">
+                    {/* Header */}
+                    <header className="px-4 py-3 glass z-10 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg">
+                                AI
+                            </div>
+                            <div>
+                                <h1 className="text-sm font-bold opacity-90">ИЛ24</h1>
+                                <p className="text-[10px] opacity-60 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                                    {selectedModel}
+                                </p>
+                            </div>
+                        </div>
+                        {activeTab === 'chat' && (
+                            <button 
+                                onClick={clearChat}
+                                className="w-8 h-8 flex items-center justify-center rounded-full bg-red-500/10 text-red-500 active:scale-90 transition-transform"
+                                title="Очистить чат"
+                            >
+                                <TrashIcon />
+                            </button>
+                        )}
+                    </header>
+
+                    {/* Content */}
+                    <main className="flex-1 overflow-hidden relative">
+                        <AnimatePresence mode="wait">
+                            {activeTab === 'chat' ? (
+                                <motion.div 
+                                    key="chat"
+                                    initial={{ opacity: 0, x: -20 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    exit={{ opacity: 0, x: -20 }}
+                                    className="h-full flex flex-col"
+                                >
+                                            <div 
+                                                ref={scrollRef}
+                                                onScroll={handleScroll}
+                                                className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar relative"
+                                            >
+                                                {messages.map((m) => (
+                                                    <motion.div 
+                                                        key={m.id}
+                                                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                                                        className={`flex ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-end gap-2`}
+                                                    >
+                                                        {m.role === 'assistant' && (
+                                                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm mb-5">
+                                                                AI
+                                                            </div>
+                                                        )}
+                                                        <div className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'} max-w-[80%]`}>
+                                                            <div className={`message-bubble p-3 shadow-sm text-sm group relative ${m.role === 'user' ? 'message-user' : 'message-bot'}`}>
+                                                                <div 
+                                                                    className="markdown-content"
+                                                                    dangerouslySetInnerHTML={{ __html: marked.parse(m.content) }}
+                                                                />
+                                                                <div className="message-tail"></div>
+                                                                {m.role === 'assistant' && (
+                                                                    <button 
+                                                                        onClick={() => copyToClipboard(m.content)}
+                                                                        className="absolute -right-8 top-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-500/10 rounded-md hover:bg-gray-500/20"
+                                                                    >
+                                                                        <CopyIcon />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                            <span className="message-timestamp px-1">
+                                                                {m.timestamp}
+                                                            </span>
+                                                        </div>
+                                                    </motion.div>
+                                                ))}
+                                                {isLoading && (
+                                                    <motion.div 
+                                                        initial={{ opacity: 0 }}
+                                                        animate={{ opacity: 1 }}
+                                                        className="flex justify-start"
+                                                    >
+                                                        <div className="message-bubble message-bot p-4 flex gap-1">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-40 animate-bounce"></span>
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-40 animate-bounce [animation-delay:0.2s]"></span>
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-40 animate-bounce [animation-delay:0.4s]"></span>
+                                                        </div>
+                                                    </motion.div>
+                                                )}
+
+                                                <AnimatePresence>
+                                                    {showScrollBottom && (
+                                                        <motion.button
+                                                            initial={{ opacity: 0, scale: 0.5 }}
+                                                            animate={{ opacity: 1, scale: 1 }}
+                                                            exit={{ opacity: 0, scale: 0.5 }}
+                                                            onClick={scrollToBottom}
+                                                            className="fixed bottom-24 right-6 w-10 h-10 rounded-full glass flex items-center justify-center text-blue-500 shadow-xl z-20 active:scale-90 transition-transform"
+                                                        >
+                                                            <ChevronDownIcon />
+                                                        </motion.button>
+                                                    )}
+                                                </AnimatePresence>
+                                            </div>
+
+                                            {/* Input Area */}
+                                            <div className="p-4 glass m-2 rounded-2xl">
+                                                <div className="flex gap-3 items-center">
+                                                    <button 
+                                                        className="opacity-40 hover:opacity-100 transition-opacity active:scale-90"
+                                                        onClick={() => tg.showAlert('Функция вложений скоро появится!')}
+                                                    >
+                                                        <PlusIcon />
+                                                    </button>
+                                                    <input 
+                                                        type="text"
+                                                        value={input}
+                                                        onChange={(e) => setInput(e.target.value)}
+                                                        onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                                                        placeholder="Спросите что-нибудь..."
+                                                        className="flex-1 bg-transparent border-none outline-none text-sm placeholder:opacity-50"
+                                                    />
+                                                    {input.trim() ? (
+                                                        <button 
+                                                            onClick={() => handleSend()}
+                                                            className="w-10 h-10 rounded-xl flex items-center justify-center bg-blue-500 text-white shadow-md transition-all active:scale-90"
+                                                        >
+                                                            <SendIcon />
+                                                        </button>
+                                                    ) : (
+                                                        <button 
+                                                            className="opacity-40 hover:opacity-100 transition-opacity active:scale-90"
+                                                            onClick={() => tg.showAlert('Голосовой ввод скоро появится!')}
+                                                        >
+                                                            <MicIcon />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                </motion.div>
+                            ) : activeTab === 'history' ? (
+                                <motion.div 
+                                    key="history"
+                                    initial={{ opacity: 0, x: 20 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    exit={{ opacity: 0, x: 20 }}
+                                    className="p-4 space-y-4 h-full overflow-y-auto custom-scrollbar"
+                                >
+                                    <button
+                                        onClick={createNewChat}
+                                        className="w-full p-4 rounded-2xl glass flex items-center justify-center gap-2 text-blue-500 hover:bg-blue-500/10 transition-all active:scale-95 mb-4"
+                                    >
+                                        <PlusIcon />
+                                        <span className="text-sm font-medium">Новый чат</span>
+                                    </button>
+
+                                    <div className="relative mb-4">
+                                        <div className="absolute left-3 top-1/2 -translate-y-1/2 opacity-40">
+                                            <SearchIcon />
+                                        </div>
+                                        <input 
+                                            type="text"
+                                            placeholder="Поиск чатов..."
+                                            className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-sm outline-none focus:border-blue-500 transition-colors"
+                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                        />
+                                    </div>
+
+                                    {filteredChats.length === 0 ? (
+                                        <div className="text-center py-8 opacity-50">
+                                            <p className="text-sm">Чаты не найдены</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {filteredChats.map(chat => (
+                                                <div
+                                                    key={chat.id || 'main'}
+                                                    className={`glass p-4 rounded-2xl flex items-center justify-between transition-all ${
+                                                        currentChatId === chat.id ? 'ring-2 ring-blue-500' : ''
+                                                    } ${chat.is_main ? 'bg-blue-500/5 border-blue-500/20' : ''}`}
+                                                >
+                                                    <button
+                                                        onClick={() => switchChat(chat.id)}
+                                                        className="flex-1 text-left min-w-0 mr-2"
+                                                    >
+                                                        <div className="text-sm font-medium truncate flex items-center gap-2">
+                                                            {chat.is_main && <span className="w-2 h-2 rounded-full bg-blue-500"></span>}
+                                                            {chat.title}
+                                                        </div>
+                                                        <div className="text-[10px] opacity-50 mt-1">
+                                                            {chat.updated_at ? new Date(chat.updated_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Основной чат бота'}
+                                                        </div>
+                                                    </button>
+                                                    <div className="flex items-center gap-1">
+                                                        {!chat.is_main && (
+                                                            <button
+                                                                onClick={() => renameChat(chat.id, chat.title)}
+                                                                className="p-2 rounded-xl text-white/40 hover:text-white hover:bg-white/10 transition-all active:scale-90"
+                                                            >
+                                                                <EditIcon />
+                                                            </button>
+                                                        )}
+                                                        {!chat.is_main && (
+                                                            <button
+                                                                onClick={() => deleteChat(chat.id)}
+                                                                className="p-2 rounded-xl text-red-500/60 hover:text-red-500 hover:bg-red-500/10 transition-all active:scale-90"
+                                                            >
+                                                                <TrashIcon />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </motion.div>
+                            ) : (
+                                <motion.div 
+                                    key="settings"
+                                    initial={{ opacity: 0, x: 20 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    exit={{ opacity: 0, x: 20 }}
+                                    className="p-4 space-y-6"
+                                >
+                                    <div className="glass p-4 rounded-2xl">
+                                        <h3 className="text-sm font-bold mb-4 flex items-center gap-2">
+                                            <ChatIcon /> Выберите модель
+                                        </h3>
+                                        <div className="space-y-2">
+                                            {models.map(model => (
+                                                <button
+                                                    key={model.id}
+                                                    onClick={() => {
+                                                        setSelectedModel(model.id);
+                                                        tg.HapticFeedback.impactOccurred('light');
+                                                    }}
+                                                    className={`w-full p-3 rounded-xl border transition-all flex items-center justify-between ${
+                                                        selectedModel === model.id 
+                                                            ? 'bg-blue-500/10 border-blue-500 text-blue-500' 
+                                                            : 'bg-white/5 border-transparent opacity-60'
+                                                    }`}
+                                                >
+                                                    <div className="text-left">
+                                                        <div className="text-sm font-medium">{model.name}</div>
+                                                        <div className="text-[10px] opacity-70">{model.id}</div>
+                                                    </div>
+                                                    {selectedModel === model.id && (
+                                                        <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="glass p-4 rounded-2xl">
+                                        <h3 className="text-sm font-bold mb-2">О приложении</h3>
+                                        <p className="text-xs opacity-60 leading-relaxed">
+                                            ИЛ24 Mini App предоставляет удобный интерфейс для взаимодействия с передовыми моделями искусственного интеллекта прямо в Telegram.
+                                        </p>
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </main>
+
+                    {/* Navbar */}
+                    <nav className="glass px-6 py-3 flex justify-around items-center rounded-t-3xl border-t-0 shadow-2xl">
+                        <button 
+                            onClick={() => {
+                                setActiveTab('chat');
+                                tg.HapticFeedback.selectionChanged();
+                            }}
+                            className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'chat' ? 'text-blue-500' : 'opacity-40'}`}
+                        >
+                            <ChatIcon />
+                            <span className="text-[10px] font-bold">Чат</span>
+                        </button>
+                        <button 
+                            onClick={() => {
+                                setActiveTab('history');
+                                loadChats();
+                                tg.HapticFeedback.selectionChanged();
+                            }}
+                            className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'history' ? 'text-blue-500' : 'opacity-40'}`}
+                        >
+                            <HistoryIcon />
+                            <span className="text-[10px] font-bold">История</span>
+                        </button>
+                        <button 
+                            onClick={() => {
+                                setActiveTab('settings');
+                                tg.HapticFeedback.selectionChanged();
+                            }}
+                            className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'settings' ? 'text-blue-500' : 'opacity-40'}`}
+                        >
+                            <SettingsIcon />
+                            <span className="text-[10px] font-bold">Модели</span>
+                        </button>
+                    </nav>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
